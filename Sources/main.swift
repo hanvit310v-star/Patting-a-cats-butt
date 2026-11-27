@@ -25,6 +25,8 @@ enum Config {
     static let captureSamples = 64              // 친 뒤 살펴볼 센서 값 개수(약 80ms)
     static let calibrationTaps = 5              // 좌우 맞추기 때 한쪽당 치는 횟수
     static let alwaysOnTop = true               // 창을 항상 맨 위에 둘지
+    static let turnSoundLead: Double = 0.3      // 소리를 뒤돌아보는 순간보다 이만큼(초) 먼저 시작. 크게 하면 더 일찍 나옴
+    static let turnSoundVolume: Float = 1.0     // 뒤돌아볼 때 소리 크기(0.0~1.0). 파일 자체는 평균 음량(-16dB 근처)으로 맞춰 둠
 }
 
 enum Side { case left, right }
@@ -213,6 +215,7 @@ final class CatModel: ObservableObject {
     @Published var side: Side = .right
     @Published var showTurn = false
     @Published var hitCount = 0
+    @Published var perfectCount = 0      // 놀기 단계에서 두드릴 때마다 +1 → PERFECT 문구 재생 신호
     @Published var turnCount = 0
     @Published var status = ""
     @Published var calibration: Calibration = .off
@@ -223,6 +226,14 @@ final class CatModel: ObservableObject {
 
     let detector = HitDetector()
     private var turnTimer: Timer?
+    private var soundTimer: Timer?
+    /// 뒤돌아볼 때 나는 소리 (Resources/cat_turn_sound.m4a)
+    private let turnSound: NSSound? = {
+        guard let url = Bundle.main.url(forResource: "cat_turn_sound", withExtension: "m4a"),
+              let s = NSSound(contentsOf: url, byReference: true) else { return nil }
+        s.volume = Config.turnSoundVolume
+        return s
+    }()
     private var leftSamples: [SIMD2<Double>] = []
     private var rightSamples: [SIMD2<Double>] = []
     private var tutorialJerks: [Double] = []
@@ -358,11 +369,18 @@ final class CatModel: ObservableObject {
     func hit(_ s: Side) {
         if phase == .guide { return }
         turnTimer?.invalidate()
+        soundTimer?.invalidate()
         side = s
         showTurn = false
         hitCount += 1
+        if phase == .play { perfectCount += 1 }      // 튜토리얼 중에는 띄우지 않고, 놀기 단계에서만 PERFECT
         turnTimer = Timer.scheduledTimer(withTimeInterval: Config.turnDelay, repeats: false) { [weak self] _ in
             self?.turnAround()
+        }
+        // 소리는 뒤돌아보기보다 turnSoundLead초 먼저 시작
+        soundTimer = Timer.scheduledTimer(withTimeInterval: max(0, Config.turnDelay - Config.turnSoundLead), repeats: false) { [weak self] _ in
+            self?.turnSound?.stop()
+            self?.turnSound?.play()
         }
     }
 
@@ -382,7 +400,7 @@ struct CatView: View {
     let turn = NSImage(named: "cat_turn") ?? NSImage()
 
     var body: some View {
-        VStack(spacing: 32) {   // 고양이와 아래 문구 사이 간격
+        VStack(spacing: 10) {
             ZStack(alignment: .bottom) {
                 // 치거나 뒤돌아볼 때마다 같은 "뿅!" 효과(가로로 늘었다 통통 튀며 복귀)
                 catImage(model.showTurn ? turn : back)
@@ -390,11 +408,11 @@ struct CatView: View {
                         content.scaleEffect(x: v.sx, y: v.sy, anchor: .bottom)
                     } keyframes: { _ in
                         KeyframeTrack(\.sx) {
-                            CubicKeyframe(1.07, duration: 0.05)
+                            CubicKeyframe(1.1, duration: 0.05)
                             SpringKeyframe(1.0, duration: 0.4, spring: .bouncy(extraBounce: 0.3))
                         }
                         KeyframeTrack(\.sy) {
-                            CubicKeyframe(0.92, duration: 0.05)
+                            CubicKeyframe(0.88, duration: 0.05)
                             SpringKeyframe(1.0, duration: 0.4, spring: .bouncy(extraBounce: 0.3))
                         }
                     }
@@ -407,7 +425,7 @@ struct CatView: View {
                 .frame(maxWidth: .infinity)
                 .opacity(model.phase == .play ? 1 : 0)
         }
-        .padding(.top, 16).padding(.horizontal, 16).padding(.bottom, 36)   // 창 아래쪽 여백
+        .padding(16)
         .frame(width: Config.catWidth + 80)
         .overlay {
             switch model.phase {
@@ -416,6 +434,7 @@ struct CatView: View {
             case .play: EmptyView()
             }
         }
+        .overlay { PerfectBadge(trigger: model.perfectCount) }      // 화면 가운데에 뜨는 PERFECT
         .animation(.easeOut(duration: 0.25), value: model.phase)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: model.calibration)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: model.tutorialDone)

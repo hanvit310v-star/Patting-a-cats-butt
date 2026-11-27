@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 APP="build/고양이 궁디팡팡.app"
 rm -rf build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-swiftc -O -parse-as-library Sources/main.swift -o "$APP/Contents/MacOS/CatPang"
+swiftc -O -parse-as-library Sources/*.swift -o "$APP/Contents/MacOS/CatPang"
 cp Info.plist "$APP/Contents/"
 cp Resources/* "$APP/Contents/Resources/"
 codesign --force --sign - "$APP" >/dev/null 2>&1
